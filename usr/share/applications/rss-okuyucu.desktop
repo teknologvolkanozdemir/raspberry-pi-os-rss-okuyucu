@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=RSS Okuyucu
+Comment=Erişilebilir RSS ve Haber Okuyucu
+Exec=rss-okuyucu
+Terminal=false
+Type=Application
+Categories=Network;News;

@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+import os
+import sqlite3
+import threading
+import gi
+
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, GLib
+import feedparser
+
+
+class RssOkuyucuApp(Gtk.Window):
+
+  def __init__(self):
+    super().__init__(title="Erişilebilir RSS Okuyucu")
+    self.set_border_width(15)
+    self.set_default_size(600, 450)
+
+    self.db_yolu = os.path.expanduser("~/.config/rss-okuyucu.db")
+    os.makedirs(os.path.dirname(self.db_yolu), exist_ok=True)
+    self.vt_olustur()
+
+    notebook = Gtk.Notebook()
+    self.add(notebook)
+
+    self.kur_kaynaklar_sekmesi(notebook)
+    self.kur_icerikler_sekmesi(notebook)
+
+    self.kaynaklari_listele()
+    self.icerikleri_guncelle()
+
+  def vt_olustur(self):
+    conn = sqlite3.connect(self.db_yolu)
+    cursor = conn.cursor()
+    cursor.execute(
+        "CREATE TABLE IF NOT EXISTS kaynaklar (id INTEGER PRIMARY KEY"
+        " AUTOINCREMENT, isim TEXT, url TEXT)"
+    )
+    conn.commit()
+    conn.close()
+
+  def kur_kaynaklar_sekmesi(self, notebook):
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+    box.set_border_width(10)
+
+    form_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+    self.entry_isim = Gtk.Entry()
+    self.entry_isim.set_placeholder_text("Kaynak Adı (örn: DonanımHaber)")
+    self.entry_url = Gtk.Entry()
+    self.entry_url.set_placeholder_text("RSS Linki (örn: https://...)")
+
+    self.btn_ekle = Gtk.Button(label="Kaynak Ekle")
+    self.btn_ekle.connect("clicked", self.kaynak_ekle)
+
+    form_box.pack_start(self.entry_isim, True, True, 0)
+    form_box.pack_start(self.entry_url, True, True, 0)
+    form_box.pack_start(self.btn_ekle, False, False, 0)
+    box.pack_start(form_box, False, False, 0)
+
+    self.liste_model = Gtk.ListStore(int, str, str)
+    self.agac_gorunum = Gtk.TreeView(model=self.liste_model)
+
+    for i, baslik in enumerate(["ID", "Kaynak Adı", "RSS Adresi"]):
+      renderer = Gtk.CellRendererText()
+      column = Gtk.TreeViewColumn(baslik, renderer, text=i)
+      self.agac_gorunum.append_column(column)
+
+    scrolled = Gtk.ScrolledWindow()
+    scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+    scrolled.add(self.agac_gorunum)
+    box.pack_start(scrolled, True, True, 0)
+
+    btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+    self.btn_sil = Gtk.Button(label="Seçili Kaynağı Sil")
+    self.btn_sil.connect("clicked", self.kaynak_sil)
+    btn_box.pack_start(self.btn_sil, False, False, 0)
+    box.pack_start(btn_box, False, False, 0)
+
+    notebook.append_page(box, Gtk.Label(label="RSS Kaynakları"))
+
+  def kur_icerikler_sekmesi(self, notebook):
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+    box.set_border_width(10)
+
+    self.icerik_model = Gtk.ListStore(str, str)
+    self.icerik_agac = Gtk.TreeView(model=self.icerik_model)
+
+    for i, baslik in enumerate(["Başlık", "Kaynak"]):
+      renderer = Gtk.CellRendererText()
+      column = Gtk.TreeViewColumn(baslik, renderer, text=i)
+      self.icerik_agac.append_column(column)
+
+    scrolled = Gtk.ScrolledWindow()
+    scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+    scrolled.add(self.icerik_agac)
+    box.pack_start(scrolled, True, True, 0)
+
+    btn_yenile = Gtk.Button(label="İçerikleri Yenile")
+    btn_yenile.connect("clicked", lambda w: self.icerikleri_guncelle())
+    box.pack_start(btn_yenile, False, False, 0)
+
+    notebook.append_page(box, Gtk.Label(label="RSS İçerikleri"))
+
+  def kaynak_ekle(self, widget):
+    isim = self.entry_isim.get_text().strip()
+    url = self.entry_url.get_text().strip()
+    if not isim or not url:
+      return
+
+    conn = sqlite3.connect(self.db_yolu)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO kaynaklar (isim, url) VALUES (?, ?)", (isim, url)
+    )
+    conn.commit()
+    conn.close()
+
+    self.entry_isim.set_text("")
+    self.entry_url.set_text("")
+    self.kaynaklari_listele()
+    self.icerikleri_guncelle()
+
+  def kaynak_sil(self, widget):
+    secim = self.agac_gorunum.get_selection()
+    model, iter_ = secim.get_selected()
+    if iter_:
+      kid = model[iter_][0]
+      conn = sqlite3.connect(self.db_yolu)
+      cursor = conn.cursor()
+      cursor.execute("DELETE FROM kaynaklar WHERE id = ?", (kid,))
+      conn.commit()
+      conn.close()
+      self.kaynaklari_listele()
+      self.icerikleri_guncelle()
+
+  def kaynaklari_listele(self):
+    self.liste_model.clear()
+    conn = sqlite3.connect(self.db_yolu)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, isim, url FROM kaynaklar")
+    for row in cursor.fetchall():
+      self.liste_model.append(row)
+    conn.close()
+
+  def icerikleri_guncelle(self):
+    self.icerik_model.clear()
+    conn = sqlite3.connect(self.db_yolu)
+    cursor = conn.cursor()
+    cursor.execute("SELECT isim, url FROM kaynaklar")
+    kaynaklar = cursor.fetchall()
+    conn.close()
+
+    t = threading.Thread(target=self._veri_cek, args=(kaynaklar,))
+    t.daemon = True
+    t.start()
+
+  def _veri_cek(self, kaynaklar):
+    gecici_liste = []
+    for isim, url in kaynaklar:
+      try:
+        feed = feedparser.parse(url)
+        for entry in feed.entries[:10]:
+          gecici_liste.append((entry.title, isim))
+      except Exception:
+        pass
+
+    GLib.idle_add(self._listeyi_doldur, gecici_liste)
+
+  def _listeyi_doldur(self, veri):
+    for baslik, kaynak in veri:
+      self.icerik_model.append([baslik, kaynak])
+
+
+if __name__ == "__main__":
+  win = RssOkuyucuApp()
+  win.connect("destroy", Gtk.main_quit)
+  win.show_all()
+  Gtk.main()
